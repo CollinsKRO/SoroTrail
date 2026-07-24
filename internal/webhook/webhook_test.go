@@ -169,6 +169,14 @@ func (s *stubSubscriptionStore) ListEnabledSubscriptions(context.Context) ([]sto
 	return s.enabledSubs, s.enabledSubsErr
 }
 
+func (s *stubSubscriptionStore) ListSubscriptions(context.Context, string, int) ([]store.Subscription, string, error) {
+	return nil, "", nil
+}
+
+func (s *stubSubscriptionStore) ListDeliveryAttempts(context.Context, int64, string, int) ([]store.DeliveryAttempt, string, error) {
+	return nil, "", nil
+}
+
 func (s *stubSubscriptionStore) RecordDeliveryAttempt(_ context.Context, a store.DeliveryAttempt) (store.DeliveryAttempt, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -357,8 +357,8 @@ func (m *mockStore) CreateSubscription(_ context.Context, sub store.Subscription
 func (m *mockStore) GetSubscription(_ context.Context, id int64) (store.Subscription, error) {
 	return store.Subscription{}, store.ErrNotFound
 }
-func (m *mockStore) ListSubscriptions(context.Context) ([]store.Subscription, error) {
-	return nil, nil
+func (m *mockStore) ListSubscriptions(context.Context, string, int) ([]store.Subscription, string, error) {
+	return nil, "", nil
 }
 func (m *mockStore) UpdateSubscription(_ context.Context, sub store.Subscription) (store.Subscription, error) {
 	return sub, nil
@@ -375,8 +375,8 @@ func (m *mockStore) RecordDeliveryAttempt(_ context.Context, a store.DeliveryAtt
 	a.ID = 1
 	return a, nil
 }
-func (m *mockStore) ListDeliveryAttempts(context.Context, int64, int) ([]store.DeliveryAttempt, error) {
-	return nil, nil
+func (m *mockStore) ListDeliveryAttempts(context.Context, int64, string, int) ([]store.DeliveryAttempt, string, error) {
+	return nil, "", nil
 }
 
 // seedLedgers records pre-existing events in m.events so tests can set up

@@ -49,15 +49,44 @@ func (p *Postgres) GetSubscription(ctx context.Context, id int64) (Subscription,
 	return s, nil
 }
 
-func (p *Postgres) ListSubscriptions(ctx context.Context) ([]Subscription, error) {
-	rows, err := p.pool.Query(ctx, `
-		SELECT id, url, filters, secret, enabled, failure_count, created_at
-		FROM subscriptions ORDER BY id`)
+func (p *Postgres) ListSubscriptions(ctx context.Context, cursor string, limit int) ([]Subscription, string, error) {
+	if limit <= 0 {
+		limit = DefaultQueryLimit
+	}
+	if limit > MaxQueryLimit {
+		limit = MaxQueryLimit
+	}
+
+	query := `SELECT id, url, filters, secret, enabled, failure_count, created_at
+		FROM subscriptions`
+	var args []any
+	if cursor != "" {
+		query += ` WHERE id > $1`
+		args = append(args, cursor)
+		query += ` ORDER BY id LIMIT $2`
+		args = append(args, limit+1)
+	} else {
+		query += ` ORDER BY id LIMIT $1`
+		args = append(args, limit+1)
+	}
+
+	rows, err := p.pool.Query(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("listing subscriptions: %w", err)
+		return nil, "", fmt.Errorf("listing subscriptions: %w", err)
 	}
 	defer rows.Close()
-	return scanSubscriptions(rows)
+
+	subs, err := scanSubscriptions(rows)
+	if err != nil {
+		return nil, "", err
+	}
+
+	next := ""
+	if len(subs) > limit {
+		subs = subs[:limit]
+		next = fmt.Sprintf("%d", subs[limit-1].ID)
+	}
+	return subs, next, nil
 }
 
 func (p *Postgres) UpdateSubscription(ctx context.Context, s Subscription) (Subscription, error) {
@@ -162,21 +191,32 @@ func (p *Postgres) RecordDeliveryAttempt(ctx context.Context, a DeliveryAttempt)
 	return a, nil
 }
 
-func (p *Postgres) ListDeliveryAttempts(ctx context.Context, subscriptionID int64, limit int) ([]DeliveryAttempt, error) {
+func (p *Postgres) ListDeliveryAttempts(ctx context.Context, subscriptionID int64, cursor string, limit int) ([]DeliveryAttempt, string, error) {
 	if limit <= 0 {
-		limit = 50
+		limit = DefaultQueryLimit
 	}
-	rows, err := p.pool.Query(ctx, `
-		SELECT id, subscription_id, event_id, status, response_code,
+	if limit > MaxQueryLimit {
+		limit = MaxQueryLimit
+	}
+
+	query := `SELECT id, subscription_id, event_id, status, response_code,
 		       duration_ms, error, created_at
 		FROM delivery_attempts
-		WHERE subscription_id = $1
-		ORDER BY created_at DESC
-		LIMIT $2`,
-		subscriptionID, limit,
-	)
+		WHERE subscription_id = $1`
+	args := []any{subscriptionID}
+	if cursor != "" {
+		query += ` AND id < $2`
+		args = append(args, cursor)
+		query += ` ORDER BY id DESC LIMIT $3`
+		args = append(args, limit+1)
+	} else {
+		query += ` ORDER BY id DESC LIMIT $2`
+		args = append(args, limit+1)
+	}
+
+	rows, err := p.pool.Query(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("listing delivery attempts: %w", err)
+		return nil, "", fmt.Errorf("listing delivery attempts: %w", err)
 	}
 	defer rows.Close()
 
@@ -186,7 +226,7 @@ func (p *Postgres) ListDeliveryAttempts(ctx context.Context, subscriptionID int6
 		var errStr *string
 		if err := rows.Scan(&a.ID, &a.SubscriptionID, &a.EventID, &a.Status,
 			&a.ResponseCode, &a.DurationMs, &errStr, &a.CreatedAt); err != nil {
-			return nil, fmt.Errorf("scanning delivery attempt: %w", err)
+			return nil, "", fmt.Errorf("scanning delivery attempt: %w", err)
 		}
 		if errStr != nil {
 			a.Error = *errStr
@@ -194,9 +234,15 @@ func (p *Postgres) ListDeliveryAttempts(ctx context.Context, subscriptionID int6
 		attempts = append(attempts, a)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("reading delivery attempts: %w", err)
+		return nil, "", fmt.Errorf("reading delivery attempts: %w", err)
 	}
-	return attempts, nil
+
+	next := ""
+	if len(attempts) > limit {
+		attempts = attempts[:limit]
+		next = fmt.Sprintf("%d", attempts[limit-1].ID)
+	}
+	return attempts, next, nil
 }
 
 // --- helpers ---

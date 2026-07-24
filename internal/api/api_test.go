@@ -114,8 +114,8 @@ func (s *stubStore) CreateSubscription(_ context.Context, sub store.Subscription
 func (s *stubStore) GetSubscription(_ context.Context, id int64) (store.Subscription, error) {
 	return store.Subscription{}, store.ErrNotFound
 }
-func (s *stubStore) ListSubscriptions(context.Context) ([]store.Subscription, error) {
-	return nil, nil
+func (s *stubStore) ListSubscriptions(context.Context, string, int) ([]store.Subscription, string, error) {
+	return nil, "", nil
 }
 func (s *stubStore) UpdateSubscription(_ context.Context, sub store.Subscription) (store.Subscription, error) {
 	return sub, nil
@@ -132,8 +132,8 @@ func (s *stubStore) RecordDeliveryAttempt(_ context.Context, a store.DeliveryAtt
 	a.ID = 1
 	return a, nil
 }
-func (s *stubStore) ListDeliveryAttempts(context.Context, int64, int) ([]store.DeliveryAttempt, error) {
-	return nil, nil
+func (s *stubStore) ListDeliveryAttempts(context.Context, int64, string, int) ([]store.DeliveryAttempt, string, error) {
+	return nil, "", nil
 }
 
 type stubRPC struct {
@@ -238,7 +238,7 @@ func TestListEvents_BadParams(t *testing.T) {
 	}
 }
 
-func TestListEvents_ReturnsCursor(t *testing.T) {
+func TestListEvents_ReturnsNextCursor(t *testing.T) {
 	st := &stubStore{
 		events:     []store.Event{{ID: "e1"}, {ID: "e2"}},
 		nextCursor: "e2",
@@ -247,12 +247,70 @@ func TestListEvents_ReturnsCursor(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
 	var out struct {
-		Events []store.Event `json:"events"`
-		Cursor string        `json:"cursor"`
+		Events     []store.Event `json:"events"`
+		NextCursor string        `json:"next_cursor"`
 	}
 	require.NoError(t, json.Unmarshal(body, &out))
 	assert.Len(t, out.Events, 2)
-	assert.Equal(t, "e2", out.Cursor)
+	// nextCursor should be base64-encoded "e2"
+	assert.Equal(t, "ZTI=", out.NextCursor)
+}
+
+func TestListEvents_EncodedCursorRoundTrip(t *testing.T) {
+	// Verify that a cursor passed to /events is decoded before reaching
+	// the store, and a cursor returned from the store is encoded in the
+	// response.
+	st := &stubStore{
+		events:     []store.Event{{ID: "result"}},
+		nextCursor: "", // exhausted
+	}
+	resp, body := doGet(t, newTestServer(st, nil), "/events?cursor=ZTI=") // base64("e2")
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, "e2", st.lastFilter.Cursor, "cursor must be decoded before hitting the store")
+
+	// Also test invalid cursor returns 400
+	resp2, _ := doGet(t, newTestServer(&stubStore{}, nil), "/events?cursor=!!!not-base64!!!")
+	assert.Equal(t, http.StatusBadRequest, resp2.StatusCode, "invalid cursor must return 400")
+	_ = resp
+	_ = body
+}
+
+func TestListEvents_PaginationBoundaries(t *testing.T) {
+	t.Run("empty result set", func(t *testing.T) {
+		st := &stubStore{events: nil, nextCursor: ""}
+		resp, body := doGet(t, newTestServer(st, nil), "/events")
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		var out map[string]any
+		require.NoError(t, json.Unmarshal(body, &out))
+		assert.NotContains(t, out, "next_cursor", "empty set must omit next_cursor")
+	})
+
+	t.Run("exactly one page has no next_cursor", func(t *testing.T) {
+		st := &stubStore{events: []store.Event{{ID: "e1"}}, nextCursor: ""}
+		resp, body := doGet(t, newTestServer(st, nil), "/events?limit=1")
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		var out map[string]any
+		require.NoError(t, json.Unmarshal(body, &out))
+		assert.NotContains(t, out, "next_cursor", "full page that ends the set must omit next_cursor")
+	})
+
+	t.Run("cursor past end returns empty page", func(t *testing.T) {
+		st := &stubStore{events: nil, nextCursor: ""}
+		resp, body := doGet(t, newTestServer(st, nil), "/events?cursor=YWJjZGVmZw==") // base64("abcdefg")
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		var out eventsResponse
+		require.NoError(t, json.Unmarshal(body, &out))
+		assert.Empty(t, out.Events)
+		assert.Empty(t, out.NextCursor)
+	})
+
+	t.Run("invalid cursor returns 400", func(t *testing.T) {
+		resp, body := doGet(t, newTestServer(&stubStore{}, nil), "/events?cursor=!!!invalid!!!")
+		require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+		var e map[string]string
+		require.NoError(t, json.Unmarshal(body, &e))
+		assert.Contains(t, e["error"], "cursor")
+	})
 }
 
 func TestListEvents_IncludeXDR(t *testing.T) {

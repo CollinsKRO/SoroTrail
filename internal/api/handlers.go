@@ -68,27 +68,23 @@ type errorResponse struct {
 }
 
 type eventsResponse struct {
-	Events []store.Event `json:"events"`
-	// Cursor is non-empty when another page exists; pass it back as ?cursor=.
-	Cursor string `json:"cursor,omitempty"`
+	Events     []store.Event `json:"events"`
+	NextCursor string        `json:"next_cursor,omitempty"`
 }
 
 type eventsWithXDRResponse struct {
-	Events []eventWithXDR `json:"events"`
-	// Cursor is non-empty when another page exists; pass it back as ?cursor=.
-	Cursor string `json:"cursor,omitempty"`
+	Events     []eventWithXDR `json:"events"`
+	NextCursor string         `json:"next_cursor,omitempty"`
 }
 
 type enrichedEventsResponse struct {
-	Events []store.EnrichedEvent `json:"events"`
-	// Cursor is non-empty when another page exists.
-	Cursor string `json:"cursor,omitempty"`
+	Events     []store.EnrichedEvent `json:"events"`
+	NextCursor string                `json:"next_cursor,omitempty"`
 }
 
 type enrichedEventsWithXDRResponse struct {
-	Events []enrichedEventWithXDR `json:"events"`
-	// Cursor is non-empty when another page exists.
-	Cursor string `json:"cursor,omitempty"`
+	Events     []enrichedEventWithXDR `json:"events"`
+	NextCursor string                 `json:"next_cursor,omitempty"`
 }
 
 type eventWithXDR struct {
@@ -178,29 +174,34 @@ func (s *Server) serveEvents(w http.ResponseWriter, r *http.Request, filter stor
 		return
 	}
 
+	next := ""
+	if cursor != "" {
+		next = EncodeCursor(cursor)
+	}
+
 	decoded := r.URL.Query().Get("decoded") == "true"
 	includeXDR := r.URL.Query().Get("include_xdr") == "true"
 	if decoded && s.enricher != nil {
 		enriched := s.enricher.EnrichEvents(r.Context(), events)
 		if includeXDR {
 			writeJSON(w, http.StatusOK, enrichedEventsWithXDRResponse{
-				Events: enrichEventsWithXDR(enriched),
-				Cursor: cursor,
+				Events:     enrichEventsWithXDR(enriched),
+				NextCursor: next,
 			})
 			return
 		}
-		writeJSON(w, http.StatusOK, enrichedEventsResponse{Events: enriched, Cursor: cursor})
+		writeJSON(w, http.StatusOK, enrichedEventsResponse{Events: enriched, NextCursor: next})
 		return
 	}
 	writeCacheHeaders(w, policy, immutableMaxAge, etag)
 	if includeXDR {
 		writeJSON(w, http.StatusOK, eventsWithXDRResponse{
-			Events: eventsWithXDR(events),
-			Cursor: cursor,
+			Events:     eventsWithXDR(events),
+			NextCursor: next,
 		})
 		return
 	}
-	writeJSON(w, http.StatusOK, eventsResponse{Events: events, Cursor: cursor})
+	writeJSON(w, http.StatusOK, eventsResponse{Events: events, NextCursor: next})
 }
 
 func (s *Server) handleGetEvent(w http.ResponseWriter, r *http.Request) {
@@ -560,11 +561,20 @@ func writeNotModified(w http.ResponseWriter, etag string, kind cacheability) {
 
 // filterFromQuery parses the shared event-filter query params:
 // contract_id, type, topic, from_ledger, to_ledger, from_time, to_time, cursor, limit.
+// The cursor parameter is a base64-encoded opaque token; it is decoded back
+// to the raw event ID before being passed to the store layer.
 func filterFromQuery(r *http.Request) (store.EventFilter, error) {
 	q := r.URL.Query()
 	f := store.EventFilter{
 		ContractID: q.Get("contract_id"),
-		Cursor:     q.Get("cursor"),
+	}
+
+	if raw := q.Get("cursor"); raw != "" {
+		decoded, err := DecodeCursor(raw)
+		if err != nil {
+			return f, err
+		}
+		f.Cursor = decoded
 	}
 
 	if f.ContractID != "" && !config.ValidContractID(f.ContractID) {

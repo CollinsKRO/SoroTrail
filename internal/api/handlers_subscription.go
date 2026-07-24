@@ -12,6 +12,33 @@ import (
 	"github.com/khaylebfortune/sorotrail/internal/store"
 )
 
+// --- Response types ---
+
+type subscriptionsResponse struct {
+	Subscriptions []store.Subscription `json:"subscriptions"`
+	NextCursor    string               `json:"next_cursor,omitempty"`
+}
+
+type deliveriesResponse struct {
+	Deliveries []store.DeliveryAttempt `json:"deliveries"`
+	NextCursor string                  `json:"next_cursor,omitempty"`
+}
+
+// parseLimitParam returns 0 when the raw string is empty (the caller should
+// use ResolvePageLimit on the result), or the parsed integer. It returns an
+// error when the value is not a valid non-negative integer, so callers can
+// return 400 to the client instead of silently falling back to the default.
+func parseLimitParam(raw string) (int, error) {
+	if raw == "" {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 {
+		return 0, fmt.Errorf("limit must be an integer, got %q", raw)
+	}
+	return n, nil
+}
+
 // --- Subscription CRUD handlers ---
 
 // createSubscriptionRequest is the JSON body for POST /subscriptions.
@@ -76,13 +103,35 @@ func (s *Server) handleGetSubscription(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListSubscriptions(w http.ResponseWriter, r *http.Request) {
-	subs, err := s.store.ListSubscriptions(r.Context())
+	rawCursor := r.URL.Query().Get("cursor")
+	cursor := ""
+	if rawCursor != "" {
+		var err error
+		cursor, err = DecodeCursor(rawCursor)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+	}
+
+	rawLimit, limitErr := parseLimitParam(r.URL.Query().Get("limit"))
+	if limitErr != nil {
+		writeError(w, http.StatusBadRequest, limitErr)
+		return
+	}
+	limit := ResolvePageLimit(rawLimit)
+
+	subs, nextRaw, err := s.store.ListSubscriptions(r.Context(), cursor, limit)
 	if err != nil {
 		s.log.Error("listing subscriptions", "error", err)
 		writeError(w, http.StatusInternalServerError, errors.New("listing subscriptions failed"))
 		return
 	}
-	writeJSON(w, http.StatusOK, subs)
+	next := ""
+	if nextRaw != "" {
+		next = EncodeCursor(nextRaw)
+	}
+	writeJSON(w, http.StatusOK, subscriptionsResponse{Subscriptions: subs, NextCursor: next})
 }
 
 type updateSubscriptionRequest struct {
@@ -175,23 +224,35 @@ func (s *Server) handleListDeliveries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	limit := 50
-	if raw := r.URL.Query().Get("limit"); raw != "" {
-		l, err := strconv.Atoi(raw)
-		if err != nil || l <= 0 || l > 200 {
-			writeError(w, http.StatusBadRequest, fmt.Errorf("limit must be an integer in [1,200]"))
+	rawCursor := r.URL.Query().Get("cursor")
+	cursor := ""
+	if rawCursor != "" {
+		var err error
+		cursor, err = DecodeCursor(rawCursor)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
 			return
 		}
-		limit = l
 	}
 
-	attempts, err := s.store.ListDeliveryAttempts(r.Context(), id, limit)
+	rawLimit, limitErr := parseLimitParam(r.URL.Query().Get("limit"))
+	if limitErr != nil {
+		writeError(w, http.StatusBadRequest, limitErr)
+		return
+	}
+	limit := ResolvePageLimit(rawLimit)
+
+	attempts, nextRaw, err := s.store.ListDeliveryAttempts(r.Context(), id, cursor, limit)
 	if err != nil {
 		s.log.Error("listing delivery attempts", "subscription_id", id, "error", err)
 		writeError(w, http.StatusInternalServerError, errors.New("listing delivery attempts failed"))
 		return
 	}
-	writeJSON(w, http.StatusOK, attempts)
+	next := ""
+	if nextRaw != "" {
+		next = EncodeCursor(nextRaw)
+	}
+	writeJSON(w, http.StatusOK, deliveriesResponse{Deliveries: attempts, NextCursor: next})
 }
 
 func parseSubscriptionID(r *http.Request) (int64, error) {

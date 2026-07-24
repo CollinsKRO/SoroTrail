@@ -116,6 +116,31 @@ advisory-lock strategy, and the derivation order for dependent tables.
 
 All responses are JSON. Errors look like `{"error": "message"}`.
 
+### Pagination
+
+Every list endpoint uses cursor-based pagination with opaque tokens. The
+contract is consistent across all endpoints:
+
+- **Request parameters**: `?cursor=<opaque>&limit=<int>` (both optional)
+- **Response field**: `"next_cursor"` (present as a string when more results
+  exist; omitted when the result set is exhausted)
+- **Cursor format**: standard-base64 encoding of the last row's sort key.
+  Clients **must never inspect or modify** the cursor value — treat it as
+  an opaque blob.
+- **Defaults**: `limit` defaults to 50; the maximum is 200.
+- **Invalid cursor**: returns `400 Bad Request` with the standard error
+  envelope `{"error": "invalid cursor: ..."}`.
+- **Empty result set**: returns an empty list with no `next_cursor` field.
+
+```sh
+# First page
+curl -s 'localhost:8080/events?limit=10'
+# {"events":[...],"next_cursor":"MDAwMTA5OTUxMTYyNzc3Ni0wMDAwMDAw..."}
+
+# Next page using the cursor from the previous response
+curl -s 'localhost:8080/events?cursor=MDAwMTA5OTUxMTYyNzc3Ni0wMDAwMDAw...&limit=10'
+```
+
 ### `GET /health`
 
 Reports the API's view of its dependencies. `200` when both the database and
@@ -150,7 +175,7 @@ Query parameters (all optional, combinable):
 | `from_time` | `2026-07-21T00:00:00Z` | Inclusive lower `created_at` bound (RFC 3339). Sub-second precision and missing timezone are rejected. |
 | `to_time` | `2026-07-22T00:00:00Z` | Inclusive upper `created_at` bound (RFC 3339). Sub-second precision and missing timezone are rejected. |
 | `limit` | `50` | Page size, 1–200 (default 50). |
-| `cursor` | `0001234...` | Opaque pagination cursor from a previous response. |
+| `cursor` | `MDAwMTA5OTUx...` | Opaque base64-encoded pagination cursor from a previous response (see [Pagination](#pagination)). |
 | `order` | `desc` | `asc` | `desc`, defaults to asc. Sort direction. |
 | `decoded` | `true` | When `true`, enriches events with spec-driven named fields. Contracts without a spec return flagged raw data with `"decoded": false`. |
 | `include_xdr` | `true` | When `true`, includes raw base64 `topics_xdr` and `value_xdr` on each event. Omitted by default to keep responses small. |
@@ -288,10 +313,11 @@ object `{}` matches every event. `enabled` defaults to `true`.
 
 #### `GET /subscriptions`
 
-List all subscriptions.
+List all subscriptions (paginated, see [Pagination](#pagination)).
 
 ```sh
-curl -s localhost:8080/subscriptions
+curl -s 'localhost:8080/subscriptions?limit=10'
+# {"subscriptions":[...],"next_cursor":"Mg=="}
 ```
 
 #### `GET /subscriptions/{id}`
@@ -323,35 +349,41 @@ curl -s -X DELETE localhost:8080/subscriptions/1
 
 #### `GET /subscriptions/{id}/deliveries`
 
-List delivery attempts for a subscription, newest first. Optional `?limit=`
-(default 50, max 200).
+List delivery attempts for a subscription, newest first (paginated, see
+[Pagination](#pagination)). Optional `?limit=` (default 50, max 200).
 
 ```sh
-curl -s localhost:8080/subscriptions/1/deliveries?limit=10
+curl -s 'localhost:8080/subscriptions/1/deliveries?limit=10'
+# {"deliveries":[...],"next_cursor":"NDI="}
 ```
 
+Example response:
+
 ```json
-[
-  {
-    "id": 42,
-    "subscription_id": 1,
-    "event_id": "0001099511627776-0000000001",
-    "status": "success",
-    "response_code": 200,
-    "duration_ms": 87,
-    "created_at": "2026-07-24T12:01:00Z"
-  },
-  {
-    "id": 41,
-    "subscription_id": 1,
-    "event_id": "0001099511627776-0000000000",
-    "status": "failed",
-    "response_code": 500,
-    "duration_ms": 1024,
-    "error": "HTTP 500",
-    "created_at": "2026-07-24T12:00:55Z"
-  }
-]
+{
+  "deliveries": [
+    {
+      "id": 42,
+      "subscription_id": 1,
+      "event_id": "0001099511627776-0000000001",
+      "status": "success",
+      "response_code": 200,
+      "duration_ms": 87,
+      "created_at": "2026-07-24T12:01:00Z"
+    },
+    {
+      "id": 41,
+      "subscription_id": 1,
+      "event_id": "0001099511627776-0000000000",
+      "status": "failed",
+      "response_code": 500,
+      "duration_ms": 1024,
+      "error": "HTTP 500",
+      "created_at": "2026-07-24T12:00:55Z"
+    }
+  ],
+  "next_cursor": "NDI="
+}
 ```
 
 #### Webhook payload

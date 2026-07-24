@@ -91,14 +91,13 @@ type EventFilter struct {
 	Type       string
 	// Topic matches events whose topics array contains this JSON value at any
 	// position (Postgres jsonb containment).
-	Topic      json.RawMessage
+	Topic json.RawMessage
 	// TopicContains matches events whose topics array jsonb-contains this
 	// value (Postgres @> operator). Unlike Topic, the value is passed
 	// directly without array-wrapping, so callers can use multi-element
 	// arrays: topic_contains=[{"symbol":"transfer"},{"address":"C..."}].
 	// Uses the GIN index on events.topics.
 	TopicContains json.RawMessage
-	Topic json.RawMessage
 	// Topic0-Topic3 match the exact JSON value at that specific topic array
 	// position. Unspecified positions are wildcards.
 	Topic0     json.RawMessage
@@ -413,7 +412,10 @@ type Store interface {
 	// Subscription CRUD.
 	CreateSubscription(ctx context.Context, s Subscription) (Subscription, error)
 	GetSubscription(ctx context.Context, id int64) (Subscription, error)
-	ListSubscriptions(ctx context.Context) ([]Subscription, error)
+	// ListSubscriptions returns a page of subscriptions in ascending ID
+	// order, plus a cursor for the next page ("" when there are no more
+	// results). Pass an empty cursor for the first page.
+	ListSubscriptions(ctx context.Context, cursor string, limit int) ([]Subscription, string, error)
 	UpdateSubscription(ctx context.Context, s Subscription) (Subscription, error)
 	DeleteSubscription(ctx context.Context, id int64) error
 
@@ -429,9 +431,11 @@ type Store interface {
 
 	// RecordDeliveryAttempt persists one delivery attempt.
 	RecordDeliveryAttempt(ctx context.Context, a DeliveryAttempt) (DeliveryAttempt, error)
-	// ListDeliveryAttempts returns delivery attempts for a subscription,
-	// newest first.
-	ListDeliveryAttempts(ctx context.Context, subscriptionID int64, limit int) ([]DeliveryAttempt, error)
+	// ListDeliveryAttempts returns a page of delivery attempts for a
+	// subscription, newest first, plus a cursor for the next page (""
+	// when there are no more results). Pass an empty cursor for the
+	// first page.
+	ListDeliveryAttempts(ctx context.Context, subscriptionID int64, cursor string, limit int) ([]DeliveryAttempt, string, error)
 	// GetContractSpec returns the JSON-serialized spec for a wasm_hash,
 	// or ErrNotFound when no spec is cached for that hash.
 	GetContractSpec(ctx context.Context, wasmHash string) ([]byte, error)
