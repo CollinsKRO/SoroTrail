@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"sorotrail/internal/api"
+	"github.com/sorotrail/sorotrail/internal/api"
 )
 
 func TestGenerateAPIKey_EdgeCases(t *testing.T) {
