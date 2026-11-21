@@ -1,10 +1,11 @@
-package api
+package api_test
 
 import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"sorotrail/internal/api"
 )
 
 func TestGenerateAPIKey_EdgeCases(t *testing.T) {
@@ -15,7 +16,7 @@ func TestGenerateAPIKey_EdgeCases(t *testing.T) {
 		{
 			name: "generates valid keys successfully",
 			testFn: func(t *testing.T) {
-				plaintext, prefix, digest, err := GenerateAPIKey()
+				plaintext, prefix, digest, err := api.GenerateAPIKey()
 				require.NoError(t, err)
 				assert.NotEmpty(t, plaintext)
 				assert.NotEmpty(t, prefix)
@@ -25,8 +26,8 @@ func TestGenerateAPIKey_EdgeCases(t *testing.T) {
 		{
 			name: "multiple sequential calls produce unique keys and prefixes",
 			testFn: func(t *testing.T) {
-				pt1, pre1, dig1, err1 := GenerateAPIKey()
-				pt2, pre2, dig2, err2 := GenerateAPIKey()
+				pt1, pre1, dig1, err1 := api.GenerateAPIKey()
+				pt2, pre2, dig2, err2 := api.GenerateAPIKey()
 				require.NoError(t, err1)
 				require.NoError(t, err2)
 
@@ -39,7 +40,7 @@ func TestGenerateAPIKey_EdgeCases(t *testing.T) {
 			name: "parseAPIKey handles edge cases and invalid formats",
 			testFn: func(t *testing.T) {
 				// Empty input
-				p, d, ok := parseAPIKey("")
+				p, d, ok := api.ParseAPIKey("")
 				assert.False(t, ok)
 				assert.Empty(t, p)
 				assert.Nil(t, d)
@@ -55,9 +56,19 @@ func TestGenerateAPIKey_EdgeCases(t *testing.T) {
 					},
 				)
 				for _, ik := range invalidKeys {
-					_, _, valid := parseAPIKey(ik)
+					_, _, valid := api.ParseAPIKey(ik)
 					assert.False(t, valid, "expected %q to be invalid", ik)
 				}
+			},
+		},
+		{
+			name: "validates correct api key format",
+			testFn: func(t *testing.T) {
+				plaintext, _, _, err := api.GenerateAPIKey()
+				require.NoError(t, err)
+				p, _, valid := api.ParseAPIKey(plaintext)
+				assert.True(t, valid)
+				assert.NotEmpty(t, p)
 			},
 		},
 	}
