@@ -45,15 +45,13 @@ func TestGenerateAPIKey_EdgeCases(t *testing.T) {
 				assert.Nil(t, d)
 
 				// Boundary / Invalid inputs: missing parts, wrong scheme, invalid prefix length
-				invalidKeys := []string(
-					[]string{
-						"st",
-						"st_",
-						"st_shortprefix",
-						"wrongscheme_1234567890abcdef_secret",
-						"st_1234567890abcdef_", // missing secret
-					},
-				)
+				invalidKeys := []string{
+					"st",
+					"st_",
+					"st_shortprefix",
+					"wrongscheme_1234567890abcdef_secret",
+					"st_1234567890abcdef_", // missing secret
+				}
 				for _, ik := range invalidKeys {
 					_, _, valid := ParseAPIKey(ik)
 					assert.False(t, valid, "expected %q to be invalid", ik)
