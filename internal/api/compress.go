@@ -229,6 +229,7 @@ func (w *boundedResponseWriter) Write(p []byte) (int, error) {
 	return w.buf.Write(p)
 }
 
+// Flush flushes buffered data and propagates the flush to the underlying ResponseWriter.
 func (w *boundedResponseWriter) Flush() {
 	if w.hijacked || w.exceeded {
 		return
